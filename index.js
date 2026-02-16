@@ -99,7 +99,7 @@ async function uploadBufferToDrive(file) {
 }
 
 // ====== UPLOAD ENDPOINT ======
-app.post("/upload", upload.array("photos", 20), async (req, res) => {
+app.post("/upload", upload.single("photos"), async (req, res) => {
   try {
     if (!oauthTokens) {
       return res.status(401).json({
@@ -108,14 +108,14 @@ app.post("/upload", upload.array("photos", 20), async (req, res) => {
       });
     }
 
-    if (!req.files) {
+    if (!req.file) {
       return res.status(400).json({
         success: false,
         error: "No file uploaded"
       });
     }
 
-    const result = await uploadBufferToDrive(req.files);
+    const result = await uploadBufferToDrive(req.file);
 
     res.json({
       success: true,
