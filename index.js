@@ -5,41 +5,81 @@ const { google } = require("googleapis");
 const stream = require("stream");
 
 const app = express();
-
-// ✅ Render için zorunlu
 const PORT = process.env.PORT || 4000;
 
-// ✅ Sadece frontend domainine izin ver
+// ====== ENV CHECK ======
+if (!process.env.GOOGLE_CLIENT_ID ||
+    !process.env.GOOGLE_CLIENT_SECRET ||
+    !process.env.GOOGLE_REDIRECT_URI ||
+    !process.env.GOOGLE_DRIVE_FOLDER_ID) {
+  throw new Error("Missing required environment variables");
+}
+
+// ====== CORS ======
 app.use(cors({
   origin: "https://wedding-frontend-rho.vercel.app"
 }));
 
 app.use(express.json());
 
-// ✅ Multer memory storage
+// ====== MULTER ======
 const upload = multer({
   storage: multer.memoryStorage()
 });
 
-// ✅ Service account JSON'u ENV içinden parse et
-if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-  throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON not defined in environment variables");
+// ====== OAUTH CLIENT ======
+const oauth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  process.env.GOOGLE_REDIRECT_URI
+);
+
+// Token memory’de tutulacak
+let oauthTokens = null;
+
+// ====== AUTH ROUTE ======
+app.get("/auth", (req, res) => {
+  const url = oauth2Client.generateAuthUrl({
+    access_type: "offline",
+    scope: ["https://www.googleapis.com/auth/drive.file"]
+  });
+  res.redirect(url);
+});
+
+// ====== CALLBACK ======
+app.get("/oauth2callback", async (req, res) => {
+  try {
+    const { code } = req.query;
+
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+
+    oauthTokens = tokens;
+
+    res.send("OAuth successful. You can close this tab.");
+  } catch (err) {
+    console.error("OAuth error:", err);
+    res.status(500).send("OAuth failed.");
+  }
+});
+
+// ====== DRIVE INSTANCE ======
+function getDrive() {
+  if (!oauthTokens) {
+    throw new Error("Not authenticated yet");
+  }
+  oauth2Client.setCredentials(oauthTokens);
+
+  return google.drive({
+    version: "v3",
+    auth: oauth2Client
+  });
 }
 
-const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-
-const auth = new google.auth.GoogleAuth({
-  credentials: serviceAccount,
-  scopes: ["https://www.googleapis.com/auth/drive"]
-});
-
-const drive = google.drive({
-  version: "v3",
-  auth
-});
-
-// ✅ Drive upload fonksiyonu
+// ====== UPLOAD FUNCTION ======
 async function uploadBufferToDrive(file) {
+  const drive = getDrive();
+
   const bufferStream = new stream.PassThrough();
   bufferStream.end(file.buffer);
 
@@ -57,11 +97,21 @@ async function uploadBufferToDrive(file) {
   return response.data;
 }
 
-// ✅ Upload endpoint
+// ====== UPLOAD ENDPOINT ======
 app.post("/upload", upload.single("photo"), async (req, res) => {
   try {
+    if (!oauthTokens) {
+      return res.status(401).json({
+        success: false,
+        error: "Not authenticated. Visit /auth first."
+      });
+    }
+
     if (!req.file) {
-      return res.status(400).json({ success: false, error: "No file uploaded" });
+      return res.status(400).json({
+        success: false,
+        error: "No file uploaded"
+      });
     }
 
     const result = await uploadBufferToDrive(req.file);
@@ -71,8 +121,8 @@ app.post("/upload", upload.single("photo"), async (req, res) => {
       fileId: result.id
     });
 
-  } catch (error) {
-    console.error("Upload error:", error);
+  } catch (err) {
+    console.error("Upload error:", err);
     res.status(500).json({
       success: false,
       error: "Upload failed"
@@ -80,9 +130,9 @@ app.post("/upload", upload.single("photo"), async (req, res) => {
   }
 });
 
-// ✅ Health check (Render için iyi olur)
+// ====== HEALTH CHECK ======
 app.get("/", (req, res) => {
-  res.send("Wedding photo upload server is running 🚀");
+  res.send("Wedding OAuth backend running 🚀");
 });
 
 app.listen(PORT, () => {
