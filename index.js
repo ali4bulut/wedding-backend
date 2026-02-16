@@ -15,6 +15,7 @@ if (!process.env.GOOGLE_CLIENT_ID ||
   throw new Error("Missing required environment variables");
 }
 
+app.set("trust proxy", 1);
 // ====== CORS ======
 app.use(cors({
   origin: "https://wedding-frontend-rho.vercel.app"
