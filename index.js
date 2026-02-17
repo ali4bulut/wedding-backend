@@ -79,25 +79,21 @@ function getDrive() {
 
 // ====== UPLOAD FUNCTION ======
 async function uploadBufferToDrive(file) {
-  const { google } = require("googleapis");
-  const drive = google.drive({ version: "v3", auth: oauth2Client });
-
-  // Dosya adını wedding_<timestamp>.jpeg formatında oluştur
-  const timestamp = Date.now();
-  const filename = `wedding_${timestamp}.jpeg`;
+  const stream = Readable.from(buffer);
 
   const response = await drive.files.create({
     requestBody: {
       name: filename,
-      parents: [process.env.GOOGLE_DRIVE_FOLDER_ID], // Drive klasör ID
+      parents: [GOOGLE_DRIVE_FOLDER_ID],
     },
     media: {
-      mimeType: file.mimetype,
-      body: Buffer.from(file.buffer),
+      mimeType,
+      body: stream,
     },
+    fields: "id, name",
   });
 
-  return { id: response.data.id, name: filename };
+  return response.data;
 }
 
 // ====== UPLOAD ENDPOINT ======
