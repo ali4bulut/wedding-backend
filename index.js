@@ -106,7 +106,7 @@ app.post("/upload", upload.array("photos"), async (req, res) => {
 
     const results = [];
     for (const file of req.files) {
-      const uploaded = await uploadFileToDrive(file); // yukarıdaki helper fonksiyon
+      const uploaded = await uploadBufferToDrive(file); // yukarıdaki helper fonksiyon
       results.push({ id: uploaded.id, name: uploaded.name });
     }
 
