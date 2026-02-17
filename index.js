@@ -99,37 +99,24 @@ async function uploadBufferToDrive(file) {
 }
 
 // ====== UPLOAD ENDPOINT ======
-app.post("/upload", upload.single("photos"), async (req, res) => {
+app.post("/upload", upload.array("photos"), async (req, res) => {
   try {
-    if (!oauthTokens) {
-      return res.status(401).json({
-        success: false,
-        error: "Not authenticated. Visit /auth first."
-      });
+    if (!req.files || req.files.length === 0)
+      return res.status(400).json({ success: false, error: "No files uploaded" });
+
+    const results = [];
+    for (const file of req.files) {
+      const uploaded = await uploadFileToDrive(file); // yukarıdaki helper fonksiyon
+      results.push({ id: uploaded.id, name: uploaded.name });
     }
 
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        error: "No file uploaded"
-      });
-    }
-
-    const result = await uploadBufferToDrive(req.file);
-
-    res.json({
-      success: true,
-      fileId: result.id
-    });
-
-  } catch (err) {
-    console.error("Upload error:", err);
-    res.status(500).json({
-      success: false,
-      error: "Upload failed"
-    });
+    res.json({ success: true, files: results });
+  } catch (error) {
+    console.error("Upload error:", error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
+
 
 // ====== HEALTH CHECK ======
 app.get("/", (req, res) => {
