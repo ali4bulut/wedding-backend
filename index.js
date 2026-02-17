@@ -2,7 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const { google } = require("googleapis");
-const stream = require("stream");
+const { Readable } = require('stream');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -75,6 +75,14 @@ function getDrive() {
     version: "v3",
     auth: oauth2Client
   });
+}
+// Upload setup
+const upload = multer({
+  storage: multer.memoryStorage(),
+});
+
+function generateFileName() {
+  return `wedding_${Date.now()}.jpg`;
 }
 
 // ====== UPLOAD FUNCTION ======
