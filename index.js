@@ -1,81 +1,74 @@
-const express = require("express");
-const cors = require("cors");
-const multer = require("multer");
-const { google } = require("googleapis");
+require('dotenv').config();
+
+const express = require('express');
+const multer = require('multer');
+const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const { google } = require('googleapis');
 const { Readable } = require('stream');
 
 const app = express();
+
 const PORT = process.env.PORT || 4000;
 
-// ====== ENV CHECK ======
-if (!process.env.GOOGLE_CLIENT_ID ||
-    !process.env.GOOGLE_CLIENT_SECRET ||
-    !process.env.GOOGLE_REDIRECT_URI ||
-    !process.env.GOOGLE_DRIVE_FOLDER_ID) {
-  throw new Error("Missing required environment variables");
+const {
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  GOOGLE_REDIRECT_URI,
+  GOOGLE_DRIVE_FOLDER_ID,
+  GOOGLE_REFRESH_TOKEN,
+} = process.env;
+
+if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_REDIRECT_URI) {
+  console.error("Missing OAuth environment variables.");
+  process.exit(1);
 }
 
-app.set("trust proxy", 1);
-// ====== CORS ======
-app.use(cors({
-  origin: "https://wedding-frontend-rho.vercel.app"
-}));
-
-app.use(express.json());
-
-// ====== MULTER ======
-const upload = multer({
-  storage: multer.memoryStorage()
-});
-
-// ====== OAUTH CLIENT ======
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
+const oAuth2Client = new google.auth.OAuth2(
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  GOOGLE_REDIRECT_URI
 );
 
-// Token memory’de tutulacak
-let oauthTokens = null;
-
-// ====== AUTH ROUTE ======
-app.get("/auth", (req, res) => {
-  const url = oauth2Client.generateAuthUrl({
-    access_type: "offline",
-    scope: ["https://www.googleapis.com/auth/drive.file"]
-  });
-  res.redirect(url);
-});
-
-// ====== CALLBACK ======
-app.get("/oauth2callback", async (req, res) => {
-  try {
-    const { code } = req.query;
-
-    const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
-
-    oauthTokens = tokens;
-
-    res.send("OAuth successful. You can close this tab.");
-  } catch (err) {
-    console.error("OAuth error:", err);
-    res.status(500).send("OAuth failed.");
-  }
-});
-
-// ====== DRIVE INSTANCE ======
-function getDrive() {
-  if (!oauthTokens) {
-    throw new Error("Not authenticated yet");
-  }
-  oauth2Client.setCredentials(oauthTokens);
-
-  return google.drive({
-    version: "v3",
-    auth: oauth2Client
+if (GOOGLE_REFRESH_TOKEN) {
+  oAuth2Client.setCredentials({
+    refresh_token: GOOGLE_REFRESH_TOKEN,
   });
 }
+
+const drive = google.drive({
+  version: "v3",
+  auth: oAuth2Client,
+});
+
+app.use(helmet());
+app.use(cors());
+app.use(rateLimit({ windowMs: 60000, max: 50 }));
+
+// 🔐 STEP 1 — AUTH URL
+app.get("/auth", (req, res) => {
+  const authUrl = oAuth2Client.generateAuthUrl({
+    access_type: "offline",
+    scope: ["https://www.googleapis.com/auth/drive.file"],
+  });
+
+  res.redirect(authUrl);
+});
+
+// 🔐 STEP 2 — CALLBACK
+app.get("/oauth2callback", async (req, res) => {
+  const code = req.query.code;
+
+  const { tokens } = await oAuth2Client.getToken(code);
+  oAuth2Client.setCredentials(tokens);
+
+  console.log("🔥 COPY THIS REFRESH TOKEN INTO .env:");
+  console.log(tokens.refresh_token);
+
+  res.send("Authorization successful. Check your terminal.");
+});
+
 // Upload setup
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -85,8 +78,7 @@ function generateFileName() {
   return `wedding_${Date.now()}.jpg`;
 }
 
-// ====== UPLOAD FUNCTION ======
-async function uploadBufferToDrive(file) {
+async function uploadToDrive(buffer, mimeType, filename) {
   const stream = Readable.from(buffer);
 
   const response = await drive.files.create({
@@ -104,29 +96,36 @@ async function uploadBufferToDrive(file) {
   return response.data;
 }
 
-// ====== UPLOAD ENDPOINT ======
-app.post("/upload", upload.array("photos"), async (req, res) => {
-  try {
-    if (!req.files || req.files.length === 0)
-      return res.status(400).json({ success: false, error: "No files uploaded" });
+app.post("/upload", upload.array("photos", 10), async (req, res) => {
+  if (!GOOGLE_REFRESH_TOKEN) {
+    return res.status(400).json({
+      error: "OAuth not completed. Visit /auth first.",
+    });
+  }
 
+  try {
     const results = [];
+
     for (const file of req.files) {
-      const uploaded = await uploadBufferToDrive(file); // yukarıdaki helper fonksiyon
-      results.push({ id: uploaded.id, name: uploaded.name });
+      const filename = generateFileName();
+
+      const uploaded = await uploadToDrive(
+        file.buffer,
+        file.mimetype,
+        filename
+      );
+
+      results.push(uploaded);
     }
 
-    res.json({ success: true, files: results });
-  } catch (error) {
-    console.error("Upload error:", error);
-    res.status(500).json({ success: false, error: error.message });
+    res.json({
+      success: true,
+      files: results,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Upload failed." });
   }
-});
-
-
-// ====== HEALTH CHECK ======
-app.get("/", (req, res) => {
-  res.send("Wedding OAuth backend running 🚀");
 });
 
 app.listen(PORT, () => {
